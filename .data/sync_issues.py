@@ -24,9 +24,9 @@ def github_retry_on_rate_limit(func):
             except RateLimitExceededException:
                 print("Rate Limit hit.")
                 rl = github.get_rate_limit()
-                time_to_sleep = (
+                time_to_sleep = int((
                     rl.core.reset - datetime.datetime.utcnow()
-                ).total_seconds()
+                ).total_seconds() + 1)
                 print("Sleeping for %s seconds" % time_to_sleep)
                 time.sleep(time_to_sleep)
 
@@ -83,12 +83,12 @@ def process_directory(repo, path):
     ]
     for item in repo_items:
         print("Reading file %s" % item.name)
-        if item.name in ["unlabeled", "low-info", "closed"]:
+        if item.name in ["low", "false"]:
             process_directory(repo, item.path)
             continue
 
         parent = None
-        closed = any(x in path for x in ["unlabeled", "low-info", "closed"])
+        closed = any(x in path for x in ["low", "false"])
         files = []
         dir_issues_ids = []
         severity = None
@@ -105,8 +105,8 @@ def process_directory(repo, path):
             files = [item]
 
         for file in files:
-            if "report" in file.name:
-                issue_id = int(file.name.replace("-report.md", ""))
+            if "best" in file.name:
+                issue_id = int(file.name.replace("-best.md", ""))
                 parent = issue_id
             else:
                 issue_id = int(file.name.replace(".md", ""))
@@ -136,7 +136,7 @@ def process_directory(repo, path):
         # Set the parent field for all duplicates in this directory
         if len(files) > 1 and parent is None:
             raise Exception(
-                "Issue %s does not have a primary file (-report.md)." % item.path
+                "Issue %s does not have a primary file (-best.md)." % item.path
             )
 
         if parent:
@@ -321,7 +321,7 @@ def main():
                 new_labels = issue_labels + new_labels
 
                 must_update = False
-                if existing_labels != new_labels:
+                if sorted(existing_labels) != sorted(new_labels):
                     must_update = True
                     print(
                         "\tLabels differ. Old: %s New: %s"
