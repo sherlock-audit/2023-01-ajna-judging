@@ -260,110 +260,7 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/RewardsMa
 
 
 
-# Issue H-2: Permanent freezing of unclaimed yield 
-
-Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/151 
-
-## Found by 
-Blockian
-
-## Summary
-A user can accidentally freeze potential rewards from the `RewardsManager.sol`
-
-## Vulnerability Detail
-On `claimRewards` in `RewardsManager` contract the `epochToClaim_` is not limited to the `currentBurnEpoch()`, thus allowing a user to send `epochToClaim_ > currentBurnEpoch`, rendering `isEpochClaimed[tokenId_][epochToClaim_]` true from all epochs from `0 - epochToClaim_` and disallowing the user rewards he may have received in future epochs
-
-[epochToClaim_ no limit check](https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/RewardsManager.sol#L108)
-
-
-## Impact
-By accidentally sending the wrong epoch a user may freeze unclaimed yield with no way of getting it back
-
-## Code Snippet
-```js
-    function claimRewards(
-        uint256 tokenId_,
-        uint256 epochToClaim_ // not limited
-    ) external override {
-        if (msg.sender != stakes[tokenId_].owner) revert NotOwnerOfDeposit();
-
-        if (isEpochClaimed[tokenId_][epochToClaim_]) revert AlreadyClaimed(); // will revert for epochs the user didn't receive the rewards from yet
-
-        _claimRewards(tokenId_, epochToClaim_);
-    }
-```
-
-## POC
-Add this test to the `RewardsManager.t.sol`
-```js
-    function testClaimRewardsFroozeUnclaimedYield() external {
-        skip(10);
-
-        uint256[] memory depositIndexes = new uint256[](5);
-        depositIndexes[0] = 9;
-        depositIndexes[1] = 1;
-        depositIndexes[2] = 2;
-        depositIndexes[3] = 3;
-        depositIndexes[4] = 4;
-        MintAndMemorializeParams memory mintMemorializeParams = MintAndMemorializeParams({
-            indexes: depositIndexes,
-            minter: _minterOne,
-            mintAmount: 1000 * 1e18,
-            pool: _poolOne
-        });
-
-        uint256 tokenIdOne = _mintAndMemorializePositionNFT(mintMemorializeParams);
-        _stakeToken(address(_poolOne), _minterOne, tokenIdOne);
-
-        uint256 currentBurnEpoch = _poolOne.currentBurnEpoch();
-
-        changePrank(_minterOne);
-        _rewardsManager.claimRewards(tokenIdOne, currentBurnEpoch + 10);
-
-        for (uint i = 1; i <= 10; i++) {
-            vm.expectRevert(IRewardsManagerErrors.AlreadyClaimed.selector);
-            _rewardsManager.claimRewards(tokenIdOne, currentBurnEpoch + i); // the user got all 10 next burn epochs rewards frozen as he receives AlreadyClaimed for all of them 
-        }
-    }
-```
-
-## Tool used
-
-Manual Review
-
-
-## Recommendation
-There are 2 main ways to fix this issue.
-Either limit the `for` loops that depend on `epochToClaim_` for example instead of
-```js
-for (uint256 epoch = lastBurnEpoch; epoch < epochToClaim_; )
-```
-
-use
-```js
-uint256 curBurnEpoch = IPool(ajnaPool).currentBurnEpoch();
-uint256 maxEpoch = epochToClaim_ > curBurnEpoch ? curBurnEpoch : epochToClaim_;
-for (uint256 epoch = lastBurnEpoch; epoch < maxEpoch; )
-```
-
-Which is a BAD solution (explanation in detail in the next issue)
-
-Or simply add a require statement when calling `claimRewards`
-
-```js
-    function claimRewards(
-        uint256 tokenId_,
-        uint256 epochToClaim_
-    ) external override {
-        if (epochToClaim_ > IPool(stakes[tokenId_].ajnaPool).currentBurnEpoch()) revert EpochNotAvailableYet();
-
-        // rest of the function
-    }
-```
-
-Which is a better solution
-
-# Issue H-3: Anyone who approved quote tokens to a pool can be forced to take 
+# Issue H-2: Anyone who approved quote tokens to a pool can be forced to take 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/145 
 
@@ -386,7 +283,7 @@ Manual Review
 ## Recommendation
 In the `ERC20Pool.take` and `ERC721Pool.take` functions, consider transferring collateral only from `msg.sender`. Alternatively, consider checking that `callee_` has approved spending quote tokens to `msg.sender`.
 
-# Issue H-4: CryptoPunks NFTs may be stolen via deposit frontrunning 
+# Issue H-3: CryptoPunks NFTs may be stolen via deposit frontrunning 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/140 
 
@@ -473,7 +370,7 @@ will fix with the fix for https://github.com/sherlock-audit/2023-01-ajna-judging
 
 
 
-# Issue H-5: scaledQuoteTokenAmount isn't updated to be collateral sell value in the quote token constraint case of _calculateTakeFlowsAndBondChange 
+# Issue H-4: scaledQuoteTokenAmount isn't updated to be collateral sell value in the quote token constraint case of _calculateTakeFlowsAndBondChange 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/139 
 
@@ -613,12 +510,12 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries
         }
 ```
 
-# Issue H-6: removeCollateral miss bankrupcy logic and can make future LPs sharing losses with the current ones 
+# Issue H-5: removeCollateral miss bankrupcy logic and can make future LPs sharing losses with the current ones 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/133 
 
 ## Found by 
-hyh, Jeiwan, peanuts, yixxas
+hyh, Jeiwan, yixxas
 
 ## Summary
 
@@ -757,7 +654,7 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries
 +   }
 ```
 
-# Issue H-7: Executing funded standard proposals can be prevented by a proposal slate with duplicate proposals 
+# Issue H-6: Executing funded standard proposals can be prevented by a proposal slate with duplicate proposals 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/119 
 
@@ -819,60 +716,7 @@ Manual Review
 
 Consider checking for duplicate proposal ids in the `checkSlate` function.
 
-# Issue H-8: Adversary can grief kicker by frontrunning kickAuction call with a large amount of loan 
-
-Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/111 
-
-## Found by 
-koxuan
-
-## Summary
-Average debt size of the pool is used to calculated MOMP  (Most optimistic matching price), which is used to derive NP (neutral price). Higher average debt size will result in lower MOMP and hence lower NP which will make it harder for kicker to earn a reward and more likely that the kicker is penalized. An adversary can manipulate the average debt size of the pool by frontrunning kicker's `kickAuction` call with a large amount of loan. 
-
-
-## Vulnerability Detail
-
-NP (neutral price) is a price that will be used to decide whether to reward a kicker with a bonus or punish the kicker with a penalty. In the event the auction ends with a price higher than NP, kicker will be given a penalty and if the auction ends with a price lower than NP, kicker will be rewarded with a bonus. 
-
-NP is derived from MOMP  (Most optimistic matching price). BI refers to borrower inflator. Quoted from the whitepaper page 17, When a loan is initiated (the first debt or additional debt is drawn, or collateral is removed from the loan), the neutral price is set to
-the current MOMP times the ratio of the loan’s threshold price to the LUP, plus one year’s interest. As time passes, the neutral price increases at the same rate as interest. This can be expressed as the following formula for the neutral price as a function
-of time 𝑡, where 𝑠 is the time the loan is initiated.
-
-```math
- NP_t = (1 + rate_s) * MOMP_s * TP_s * \frac{TP_s}{LUP_s} *  \frac{BI_s}{BI_t}
-```
-
-Therefore the lower the MOMP, the lower the NP. Lower NP will mean that kicker will be rewarded less and punished more compared to a higher NP. Quoted from the white paper, The MOMP, or “most optimistic matching price,” is the price at which a loan of average size would match with the most favorable lenders on the book. Technically, it is the highest price for which
-the amount of deposit above it exceeds the average loan debt of the pool. In `_kick` function, MOMP is calculated as this. Notice how total pool debt is divided by number of loans to find the average loan debt size.
-
-```solidity
-        uint256 momp = _priceAt(
-            Deposits.findIndexOfSum(
-                deposits_,
-                Maths.wdiv(poolState_.debt, noOfLoans * 1e18)
-            )
-        );
-```
-
-An adversary can frontrun `kickAuction` by taking a huge loan, causing the price for which the amount of deposit above the undercollaterized loan bucket to have a lower probability of surpassing the average loan debt. The adversary can use the deposits for the buckets above and the total pool debt to figure out how much loan is necessary to grief the kicker significantly by lowering the MOMP and NP.
-
-
-
-
-
-## Impact
-Kickers can be grieved which can disincentivize user from kicking loans that deserve to be liquidated, causing the protocol to not work as desired as undercollaterized loans will not be liquidated.
-
-## Code Snippet
-[Auctions.sol#L796-L801](https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries/external/Auctions.sol#L796-L801)
-## Tool used
-
-Manual Review
-
-## Recommendation
-Recommend taking the snapshot average loan size of the pool to prevent frontrunning attacks.
-
-# Issue H-9: ERC721Pool's mergeOrRemoveCollateral allows to remove collateral while auction is clearable 
+# Issue H-7: ERC721Pool's mergeOrRemoveCollateral allows to remove collateral while auction is clearable 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/105 
 
@@ -988,7 +832,7 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/ERC721Poo
         uint256 collateralAmount = Maths.wad(noOfNFTsToRemove_);
 ```
 
-# Issue H-10: Remaining collateral used by ERC721Pool is missed in Auctions take and bucketTake return structures 
+# Issue H-8: Remaining collateral used by ERC721Pool is missed in Auctions take and bucketTake return structures 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/103 
 
@@ -1293,7 +1137,92 @@ Manual Review
 Consider filling the variable with the resulting collateral of the borrower by placing `result.remainingCollateral = borrower.collateral` in the very end of Auctions's take() and bucketTake().
 
 
-# Issue H-11: ERC721Pool's take will proceed with truncated collateral amount and full debt when borrower's collateral is fractional 
+# Issue H-9: `moveQuoteToken()` can cause bucket to go bankrupt but it is not reflected in the accounting 
+
+Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/83 
+
+## Found by 
+yixxas
+
+## Summary
+Both `removeQuoteToken()` and `moveQuoteToken()` can be used to completely remove all quote tokens from a bucket. When this happens, if at the same time `bucketCollateral == 0 && lpsRemaining != 0`, then the bucket should be declared bankrupt. This update is done in `removeQuoteToken()` but not in `moveQuoteToken()`.
+
+## Vulnerability Detail
+`removeQuoteToken()` has the following check to update bankruptcy time when collateral and quote token remaining is 0, but lps is more than 0. `moveQuoteToken()` is however missing this check. Both this functions has the same effects on the `fromBucket` and the only difference is that `removeQuoteToken()` returns the token to `msg.sender` but `moveQuoteToken()` moves the token to another bucket.
+
+```solidity
+if (removeParams.bucketCollateral == 0 && unscaledRemaining == 0 && lpsRemaining != 0) {
+	emit BucketBankruptcy(params_.index, lpsRemaining);
+	bucket.lps            = 0;
+	bucket.bankruptcyTime = block.timestamp;
+} else {
+	bucket.lps = lpsRemaining;
+}
+```
+
+## Impact
+A future depositor to the bucket will get less lps than expected due to depositing in a bucket that is supposedly bankrupt, hence the lps they get will be diluted with the existing ones in the bucket.
+
+## Code Snippet
+https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries/external/LenderActions.sol#L359-L365
+
+## Tool used
+
+Manual Review
+
+## Recommendation
+We should check if a bucket is bankrupt after moving quote tokens.
+
+
+
+## Discussion
+
+**yixxas**
+
+Escalate for 5 USDC
+
+This issue is different from #133 and should not be duped together. While both highlights the missing bankruptcy logic, #133 describes the missing check in `removeCollateral()`. This reported issue describes the missing check in `moveQuoteToken()`. Note that fixing #133 would not fix this issue.
+
+**sherlock-admin**
+
+ > Escalate for 5 USDC
+> 
+> This issue is different from #133 and should not be duped together. While both highlights the missing bankruptcy logic, #133 describes the missing check in `removeCollateral()`. This reported issue describes the missing check in `moveQuoteToken()`. Note that fixing #133 would not fix this issue.
+
+You've created a valid escalation for 5 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+To change the amount you've staked on this escalation: Edit your comment **(do not create a new comment)**.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**grandizzy**
+
+> Escalate for 5 USDC
+> 
+> This issue is different from #133 and should not be duped together. While both highlights the missing bankruptcy logic, #133 describes the missing check in `removeCollateral()`. This reported issue describes the missing check in `moveQuoteToken()`. Note that fixing #133 would not fix this issue.
+
+I agree with this comment.
+
+**hrishibhat**
+
+Escalation accepted
+
+Although the underlying root cause is similar to #133, the occurrence is different as pointed out in the escalation. Hence will be considered separately and not a duplicate of #133 
+
+**sherlock-admin**
+
+> Escalation accepted
+> 
+> Although the underlying root cause is similar to #133, the occurrence is different as pointed out in the escalation. Hence will be considered separately and not a duplicate of #133 
+
+This issue's escalations have been accepted!
+
+Contestants' payouts and scores will be updated according to the changes made on this issue.
+
+
+
+# Issue H-10: ERC721Pool's take will proceed with truncated collateral amount and full debt when borrower's collateral is fractional 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/68 
 
@@ -1514,7 +1443,7 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries
 
 ```
 
-# Issue H-12: The deposit / withdraw / trade transaction lack of expiration timestamp check and slippage control 
+# Issue H-11: The deposit / withdraw / trade transaction lack of expiration timestamp check and slippage control 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/39 
 
@@ -1969,7 +1898,7 @@ Consider re-checking the `tokensRequested` amount when executing an extraordinar
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/122 
 
 ## Found by 
-berndartmueller
+berndartmueller, Blockian
 
 ## Summary
 
@@ -2115,7 +2044,7 @@ Consider calculating the new rewards by first multiplying `interestEarned_` by `
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/120 
 
 ## Found by 
-ctf\_sec, oxcm, berndartmueller
+berndartmueller, ctf\_sec, oxcm
 
 ## Summary
 
@@ -2290,7 +2219,180 @@ removing will fix, will be addressed after sherlock contest
 
 
 
-# Issue M-10: Settled collateral of a borrower aren't available for lenders until borrower's debt is fully cleared 
+# Issue M-10: Adversary can grief kicker by frontrunning kickAuction call with a large amount of loan 
+
+Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/111 
+
+## Found by 
+koxuan
+
+## Summary
+Average debt size of the pool is used to calculated MOMP  (Most optimistic matching price), which is used to derive NP (neutral price). Higher average debt size will result in lower MOMP and hence lower NP which will make it harder for kicker to earn a reward and more likely that the kicker is penalized. An adversary can manipulate the average debt size of the pool by frontrunning kicker's `kickAuction` call with a large amount of loan. 
+
+
+## Vulnerability Detail
+
+NP (neutral price) is a price that will be used to decide whether to reward a kicker with a bonus or punish the kicker with a penalty. In the event the auction ends with a price higher than NP, kicker will be given a penalty and if the auction ends with a price lower than NP, kicker will be rewarded with a bonus. 
+
+NP is derived from MOMP  (Most optimistic matching price). BI refers to borrower inflator. Quoted from the whitepaper page 17, When a loan is initiated (the first debt or additional debt is drawn, or collateral is removed from the loan), the neutral price is set to
+the current MOMP times the ratio of the loan’s threshold price to the LUP, plus one year’s interest. As time passes, the neutral price increases at the same rate as interest. This can be expressed as the following formula for the neutral price as a function
+of time 𝑡, where 𝑠 is the time the loan is initiated.
+
+```math
+ NP_t = (1 + rate_s) * MOMP_s * TP_s * \frac{TP_s}{LUP_s} *  \frac{BI_s}{BI_t}
+```
+
+Therefore the lower the MOMP, the lower the NP. Lower NP will mean that kicker will be rewarded less and punished more compared to a higher NP. Quoted from the white paper, The MOMP, or “most optimistic matching price,” is the price at which a loan of average size would match with the most favorable lenders on the book. Technically, it is the highest price for which
+the amount of deposit above it exceeds the average loan debt of the pool. In `_kick` function, MOMP is calculated as this. Notice how total pool debt is divided by number of loans to find the average loan debt size.
+
+```solidity
+        uint256 momp = _priceAt(
+            Deposits.findIndexOfSum(
+                deposits_,
+                Maths.wdiv(poolState_.debt, noOfLoans * 1e18)
+            )
+        );
+```
+
+An adversary can frontrun `kickAuction` by taking a huge loan, causing the price for which the amount of deposit above the undercollaterized loan bucket to have a lower probability of surpassing the average loan debt. The adversary can use the deposits for the buckets above and the total pool debt to figure out how much loan is necessary to grief the kicker significantly by lowering the MOMP and NP.
+
+
+
+
+
+## Impact
+Kickers can be grieved which can disincentivize user from kicking loans that deserve to be liquidated, causing the protocol to not work as desired as undercollaterized loans will not be liquidated.
+
+## Code Snippet
+[Auctions.sol#L796-L801](https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries/external/Auctions.sol#L796-L801)
+## Tool used
+
+Manual Review
+
+## Recommendation
+Recommend taking the snapshot average loan size of the pool to prevent frontrunning attacks.
+
+## Discussion
+
+**dmitriia**
+
+Escalate for 50 USDC
+That's valid, but griefing attacks are usually Medium as an attacker obtains no direct profit, so the overall probability of this happening is rather low/medium.
+This surface is somewhat closer to low as it is highly costly for an attacker, who will pay origination fee on a huge loan:
+
+https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries/external/BorrowerActions.sol#L161-L168
+
+```solidity
+        // borrow against pledged collateral
+        ...
+        if (amountToBorrow_ != 0 || limitIndex_ != 0) {
+            ...
+
+            // add origination fee to the amount to borrow and add to borrower's debt
+            vars.debtChange = Maths.wmul(amountToBorrow_, _feeRate(poolState_.rate) + Maths.WAD);
+```
+
+I.e. it is not shown that attacker has good cost to target user loss ratio, which they don't in the most cases as pool liquidity serves as a natural buffer for the attack (the more liquidity the higher loan needs to be to move MOMP, the higher the origination fee). So it's more a corner case, and Medium severity looks more appropriate.
+
+**sherlock-admin**
+
+ > Escalate for 50 USDC
+> That's valid, but griefing attacks are usually Medium as an attacker obtains no direct profit, so the overall probability of this happening is rather low/medium.
+> This surface is somewhat closer to low as it is highly costly for an attacker, who will pay origination fee on a huge loan:
+> 
+> https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/libraries/external/BorrowerActions.sol#L161-L168
+> 
+> ```solidity
+>         // borrow against pledged collateral
+>         ...
+>         if (amountToBorrow_ != 0 || limitIndex_ != 0) {
+>             ...
+> 
+>             // add origination fee to the amount to borrow and add to borrower's debt
+>             vars.debtChange = Maths.wmul(amountToBorrow_, _feeRate(poolState_.rate) + Maths.WAD);
+> ```
+> 
+> I.e. it is not shown that attacker has good cost to target user loss ratio, which they don't in the most cases as pool liquidity serves as a natural buffer for the attack (the more liquidity the higher loan needs to be to move MOMP, the higher the origination fee). So it's more a corner case, and Medium severity looks more appropriate.
+
+You've created a valid escalation for 50 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+To change the amount you've staked on this escalation: Edit your comment **(do not create a new comment)**.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**vkabc**
+
+Escalate for 50 USDC
+
+I will address the first point, `the attacker obtains no direct profit`. The MOMP affects NP which is used by every loan in the pool (including the attackers and others) to determine the incentives to kickers to kick the loan, and hence everyone who has a loan is incentivized to push down the MOMP and NP by taking more loans. Incentives to the borrowers to take more loans, spiralling more and more, leading to adverse effects to protocol.
+
+Second point brought up, ` it is highly costly for an attacker`.  The origination fee is calculated as the greater of the current annualized borrower interest rate divided by 52 (one week of interest) or 5 bps multiplied by the loan’s debt, taking the maximum between the two.
+
+This is the example given by the whitepaper.
+
+Suppose that the interest rate is 10%. Then Bob’s origination fee would be 18, 000 · 10%/52 = 34. 61 𝐷𝐴𝐼. When he
+withdraws his 18,000 DAI, his debt is recorded including this origination fee, for a total of 18,034.61.
+
+
+The costs is meagre compared to the incentives to borrowers, especially when being kicked will cause the loan to increase by 90 days of interest.
+
+Borrowers are all the more incentivized to take out more and bigger size loans, causing insolvency to the protocol as it is left with bad debt that nobody will liquidate.
+
+
+**sherlock-admin**
+
+ > Escalate for 50 USDC
+> 
+> I will address the first point, `the attacker obtains no direct profit`. The MOMP affects NP which is used by every loan in the pool (including the attackers and others) to determine the incentives to kickers to kick the loan, and hence everyone who has a loan is incentivized to push down the MOMP and NP by taking more loans. Incentives to the borrowers to take more loans, spiralling more and more, leading to adverse effects to protocol.
+> 
+> Second point brought up, ` it is highly costly for an attacker`.  The origination fee is calculated as the greater of the current annualized borrower interest rate divided by 52 (one week of interest) or 5 bps multiplied by the loan’s debt, taking the maximum between the two.
+> 
+> This is the example given by the whitepaper.
+> 
+> Suppose that the interest rate is 10%. Then Bob’s origination fee would be 18, 000 · 10%/52 = 34. 61 𝐷𝐴𝐼. When he
+> withdraws his 18,000 DAI, his debt is recorded including this origination fee, for a total of 18,034.61.
+> 
+> 
+> The costs is meagre compared to the incentives to borrowers, especially when being kicked will cause the loan to increase by 90 days of interest.
+> 
+> Borrowers are all the more incentivized to take out more and bigger size loans, causing insolvency to the protocol as it is left with bad debt that nobody will liquidate.
+> 
+
+You've created a valid escalation for 50 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+To change the amount you've staked on this escalation: Edit your comment **(do not create a new comment)**.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**mattcushman**
+
+We acknowledge the issue and intend to fix it (described below), but feel that Medium would be the appropriate severity.  This is fundamentally a griefing attack that is costly to the borrower to execute, and we don't feel that the spiral of over-borrowing is realistic because it would require adding more and more collateral, incurring greater and great origination fees and interest, to effect such borrows.  Furthermore, it's a function of the average loan size, not just the total debt, so if multiple borrowers participated through different loans it would move the MOMP back up.  
+
+While this attack is difficult and pricey to pursue, we do acknowledge it and propose a remedy by allowing the kicker to specify a "limit neutral price" LNP on their kick.  This would be a price supplied by the lender at the time of submitting the kick transaction that would only allow the kick to occur (and bond posted) if the actual NP exceeds the specified LNP.   By setting the LNP appropriately, the kicker can be assured that they won't find themselves with their bond tied up in an inappropriately low NP liquidation.  
+
+**hrishibhat**
+
+Escalation accepted
+
+Based on the above comments it is clear that the cost of the attack would be high and the likelihood of the attack is only in certain states of the pool. Considering this issue a valid medium
+
+
+**sherlock-admin**
+
+> Escalation accepted
+> 
+> Based on the above comments it is clear that the cost of the attack would be high and the likelihood of the attack is only in certain states of the pool. Considering this issue a valid medium
+> 
+
+This issue's escalations have been accepted!
+
+Contestants' payouts and scores will be updated according to the changes made on this issue.
+
+
+
+# Issue M-11: Settled collateral of a borrower aren't available for lenders until borrower's debt is fully cleared 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/104 
 
@@ -2451,7 +2553,7 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/ERC721Poo
 +        if (collateralSettled > 0) _rebalanceTokens(params.borrower, collateralRemaining);
 ```
 
-# Issue M-11: Deposits are eliminated before currently unclaimed reserves when there is no reserve auction 
+# Issue M-12: Deposits are eliminated before currently unclaimed reserves when there is no reserve auction 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/102 
 
@@ -2729,12 +2831,12 @@ Classifying this issue as a medium based on the above comment.
 
 
 
-# Issue M-12: Flashloan end result isn't controlled 
+# Issue M-13: Flashloan end result isn't controlled 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/101 
 
 ## Found by 
-hyh, ctf\_sec, minhtrng, CRYP70
+hyh, CRYP70, minhtrng, ctf\_sec
 
 ## Summary
 
@@ -2828,7 +2930,7 @@ Consider adding a balance control check to ensure that flash loan invariant rema
 
 This applies both to ERC20Pool's flashLoan() and FlashloanablePool's _flashLoanQuoteToken().
 
-# Issue M-13: Interest rates can be raised above the market as a griefing, disabling the pool 
+# Issue M-14: Interest rates can be raised above the market as a griefing, disabling the pool 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/100 
 
@@ -3011,7 +3113,7 @@ Per discussions so far the most effective approach, proposed by Matt, looks to b
 
 As obtaining any significant debt brings in both market and interest rate risk, i.e. will raise the probability of attacker's borrow position liquidation and also ends up paying the elevated interest rate proportionally to the debt acquired, it will substantially raise the cost and diminish practical probability of the attack.
 
-# Issue M-14: Interest rate for pool is bounded wrongly 
+# Issue M-15: Interest rate for pool is bounded wrongly 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/96 
 
@@ -3053,7 +3155,7 @@ Change to a strict comparison instead when doing the comparison.
 + if (MIN_RATE > interestRate_ || interestRate_ > MAX_RATE)         revert IPoolFactory.PoolInterestRateInvalid();
 ```
 
-# Issue M-15: Auction timers following liquidity can fall through the floor price causing pool insolvency 
+# Issue M-16: Auction timers following liquidity can fall through the floor price causing pool insolvency 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/76 
 
@@ -3205,7 +3307,7 @@ Considering this issue a valid medium as there is a possible risk of funds lost 
 
 
 
-# Issue M-16: If borrower or kicker got blacklisted by asset contract their collateral or bond funds can be permanently frozen with the pool 
+# Issue M-17: If borrower or kicker got blacklisted by asset contract their collateral or bond funds can be permanently frozen with the pool 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/75 
 
@@ -3371,7 +3473,7 @@ https://github.com/sherlock-audit/2023-01-ajna/blob/main/contracts/src/base/Pool
 
 This will also help for the situation when NFT collateral was put in by a contract borrower without `onERC721Received` implementation, so repayDebt() initiated `_transferNFT() -> safeTransferFrom()` call will fail for `msg.sender` and the ability to use a recipient become crucial.
 
-# Issue M-17: user can drawDebt that is below dust amount 
+# Issue M-18: user can drawDebt that is below dust amount 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/70 
 
@@ -3462,7 +3564,7 @@ I do not see how this would give the attacker a material advantage, but agree it
 
 
 
-# Issue M-18: Quadratic voting tally done wrong 
+# Issue M-19: Quadratic voting tally done wrong 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/64 
 
@@ -3713,7 +3815,7 @@ Subtract the square of the votes from the voting budget when voting:
          proposal_.qvBudgetAllocated += budgetAllocation_;
 ```
 
-# Issue M-19: CryptoKitty and CryptoFighter NFT can be paused, which block borrowing / repaying / liquidating action in the ERC721Pool when borrowers still forced to pay the compounding interest 
+# Issue M-20: CryptoKitty and CryptoFighter NFT can be paused, which block borrowing / repaying / liquidating action in the ERC721Pool when borrowers still forced to pay the compounding interest 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/34 
 
@@ -3891,7 +3993,7 @@ we're going to remove support for those NFTs and support only wrapped NFTs - wil
 
 
 
-# Issue M-20: Minting an NFT with a position on the same bucket as a previously minted NFT changes its deposit time 
+# Issue M-21: Minting an NFT with a position on the same bucket as a previously minted NFT changes its deposit time 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/19 
 
@@ -3933,7 +4035,7 @@ Manual Review
 
 Reconsider the `PositionsManager` architecture and the way the LP properties are stored on the Ajna protocol. Since positions are not tokenized by default, but instead are stored on state variables on each pool, it is arguably more complex to reason about transferring positions between two users. Conversely, the ERC-721 standard already provides straightforward methods for minting/burning/sending tokens for accounts. This issue could be fixed by removing the optionality of NFT minting through another independent contract (the `PositionManager.sol`), as it is centralizing other user's LPs, and instead to refactoring the Ajna pools so that every position is an ERC-721 NFT minted directly by the `Pool.sol`.
 
-# Issue M-21: Memorializing an NFT position on the same bucket of a previously memorialized NFT locks redemption 
+# Issue M-22: Memorializing an NFT position on the same bucket of a previously memorialized NFT locks redemption 
 
 Source: https://github.com/sherlock-audit/2023-01-ajna-judging/issues/13 
 
